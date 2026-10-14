@@ -30,25 +30,28 @@ enum class TapAction(val label: String) {
     COPY_BACK("コピーして元のアプリに戻る"),
     COPY_CLOSE("コピーしてアプリを閉じる"),
     COPY_ONLY("コピーのみ（画面はそのまま）"),
+    SHOW_FULL("全文を開く／たたむ"),
 }
+enum class LongAction(val label: String) { MENU("メニューを出す"), EDIT("編集"), RENAME("名前を変更") }
+enum class DoubleAction(val label: String) { NONE("なし"), RAW_COPY("穴埋めせずコピー"), EDIT("編集") }
+enum class ThemeMode(val label: String) { SYSTEM("端末に合わせる"), LIGHT("ライト"), DARK("ダーク") }
 
 enum class SortMode(val label: String) {
     MANUAL("作成順"), RECENT("最近使った順"), FREQUENT("よく使う順"), TITLE("名前順"),
 }
 
-class Settings(
+data class Settings(
     val tapAction: TapAction = TapAction.COPY_BACK,
+    val longAction: LongAction = LongAction.MENU,
+    val doubleAction: DoubleAction = DoubleAction.EDIT,
     val previewLines: Int = 2,
     val sort: SortMode = SortMode.MANUAL,
     val fillPlaceholders: Boolean = true,
-    val showToast: Boolean = true,
-) {
-    fun copy(
-        tapAction: TapAction = this.tapAction, previewLines: Int = this.previewLines,
-        sort: SortMode = this.sort, fillPlaceholders: Boolean = this.fillPlaceholders,
-        showToast: Boolean = this.showToast,
-    ) = Settings(tapAction, previewLines, sort, fillPlaceholders, showToast)
-}
+    val vibrate: Boolean = true,
+    val theme: ThemeMode = ThemeMode.SYSTEM,
+    val accent: Int = 0,
+    val fontSize: Int = 1,
+)
 
 /** 端末内のJSONファイル1つに全部保存する。書き込みは一時ファイル経由で壊れにくくする */
 class Store(private val ctx: Context) {
@@ -136,7 +139,7 @@ class Store(private val ctx: Context) {
 
     // ---------- JSON ----------
     fun toJson(): JSONObject = JSONObject().apply {
-        put("app", "copipe-dana"); put("version", 1)
+        put("app", "lattecopi"); put("version", 1)
         put("folders", JSONArray().apply {
             folders.forEach { put(JSONObject().put("id", it.id).put("name", it.name).put("parentId", it.parentId ?: JSONObject.NULL).put("order", it.order)) }
         })
@@ -149,7 +152,9 @@ class Store(private val ctx: Context) {
         })
         val s = settings.value
         put("settings", JSONObject().put("tapAction", s.tapAction.name).put("previewLines", s.previewLines)
-            .put("sort", s.sort.name).put("fill", s.fillPlaceholders).put("toast", s.showToast))
+            .put("sort", s.sort.name).put("fill", s.fillPlaceholders).put("vibrate", s.vibrate)
+            .put("longAction", s.longAction.name).put("doubleAction", s.doubleAction.name)
+            .put("theme", s.theme.name).put("accent", s.accent).put("fontSize", s.fontSize))
     }
 
     /** replace=false のときは既存データに追加（ID重複は上書き） */
@@ -170,10 +175,16 @@ class Store(private val ctx: Context) {
         }
         if (replace) o.optJSONObject("settings")?.let { j ->
             settings.value = Settings(
-                runCatching { TapAction.valueOf(j.optString("tapAction")) }.getOrDefault(TapAction.COPY_BACK),
-                j.optInt("previewLines", 2),
-                runCatching { SortMode.valueOf(j.optString("sort")) }.getOrDefault(SortMode.MANUAL),
-                j.optBoolean("fill", true), j.optBoolean("toast", true),
+                tapAction = enumOr(j.optString("tapAction"), TapAction.COPY_BACK),
+                longAction = enumOr(j.optString("longAction"), LongAction.MENU),
+                doubleAction = enumOr(j.optString("doubleAction"), DoubleAction.EDIT),
+                previewLines = j.optInt("previewLines", 2),
+                sort = enumOr(j.optString("sort"), SortMode.MANUAL),
+                fillPlaceholders = j.optBoolean("fill", true),
+                vibrate = j.optBoolean("vibrate", true),
+                theme = enumOr(j.optString("theme"), ThemeMode.SYSTEM),
+                accent = j.optInt("accent", 0),
+                fontSize = j.optInt("fontSize", 1),
             )
         }
         return ss.length()
@@ -186,6 +197,9 @@ class Store(private val ctx: Context) {
         save(); return blocks.size
     }
 }
+
+private inline fun <reified E : Enum<E>> enumOr(name: String, def: E): E =
+    runCatching { enumValueOf<E>(name) }.getOrDefault(def)
 
 private fun JSONObject.optStringOrNull(k: String): String? = if (isNull(k)) null else optString(k).ifEmpty { null }
 

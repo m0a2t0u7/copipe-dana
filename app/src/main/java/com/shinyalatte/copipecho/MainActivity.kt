@@ -11,7 +11,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -53,20 +58,30 @@ class MainActivity : ComponentActivity() {
         store = Store(applicationContext).also { it.load() }
         handleIntent(intent)
         setContent {
-            val dark = isSystemInDarkTheme()
+            val st by store.settings
+            val dark = when (st.theme) {
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            }
+            val acc = ACCENTS[st.accent.coerceIn(0, ACCENTS.lastIndex)]
             val scheme = if (dark) darkColorScheme(
-                primary = Color(0xFF7FD3BC), onPrimary = Color(0xFF00382D),
-                primaryContainer = Color(0xFF1F5145), onPrimaryContainer = Color(0xFFCFEDE4),
-                background = Color(0xFF121614), surface = Color(0xFF121614),
-                surfaceContainer = Color(0xFF1B201E), surfaceContainerHigh = Color(0xFF242A27),
+                primary = acc.dPrimary, onPrimary = Color(0xFF101010),
+                primaryContainer = acc.dContainer, onPrimaryContainer = acc.dOnContainer,
+                background = Color(0xFF131416), surface = Color(0xFF131416),
+                surfaceContainer = Color(0xFF1C1E21), surfaceContainerHigh = Color(0xFF26292D),
             ) else lightColorScheme(
-                primary = Color(0xFF2E7D6B), primaryContainer = Color(0xFFCFEDE4),
-                onPrimaryContainer = Color(0xFF0B3B30),
-                background = Color(0xFFF6F8F7), surface = Color(0xFFF6F8F7),
-                surfaceContainer = Color(0xFFFFFFFF), surfaceContainerHigh = Color(0xFFECF1EF),
+                primary = acc.lPrimary, primaryContainer = acc.lContainer,
+                onPrimaryContainer = acc.lOnContainer,
+                background = Color(0xFFF5F6F7), surface = Color(0xFFF5F6F7),
+                surfaceContainer = Color(0xFFFFFFFF), surfaceContainerHigh = Color(0xFFECEEF0),
             )
-            MaterialTheme(colorScheme = scheme) {
-                App(store, sharedText, onCopied = ::afterCopy)
+            val base = LocalDensity.current
+            val scale = when (st.fontSize) { 0 -> 0.9f; 2 -> 1.15f; else -> 1f }
+            CompositionLocalProvider(LocalDensity provides Density(base.density, base.fontScale * scale)) {
+                MaterialTheme(colorScheme = scheme) {
+                    App(store, sharedText, onCopy = ::copyText, onLeave = ::leave)
+                }
             }
         }
     }
@@ -86,20 +101,33 @@ class MainActivity : ComponentActivity() {
         if (!t.isNullOrBlank()) sharedText.value = t
     }
 
-    private fun afterCopy(text: String, snipId: String) {
-        val cm = getSystemService(ClipboardManager::class.java)
-        cm.setPrimaryClip(ClipData.newPlainText("定型文", text))
+    private fun copyText(text: String, snipId: String) {
+        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("定型文", text))
         store.markUsed(snipId)
-        val s = store.settings.value
-        // Android 13以降はOS側がコピー通知を出すので、それ以前だけ自前で出す
-        if (s.showToast && android.os.Build.VERSION.SDK_INT < 33) Toast.makeText(this, "コピーしました", Toast.LENGTH_SHORT).show()
-        when (s.tapAction) {
+    }
+
+    private fun leave(action: TapAction) {
+        when (action) {
             TapAction.COPY_BACK -> moveTaskToBack(true)
             TapAction.COPY_CLOSE -> finishAndRemoveTask()
-            TapAction.COPY_ONLY -> Unit
+            else -> Unit
         }
     }
 }
+
+private class Accent(
+    val name: String, val lPrimary: Color, val lContainer: Color, val lOnContainer: Color,
+    val dPrimary: Color, val dContainer: Color, val dOnContainer: Color,
+)
+
+private val ACCENTS = listOf(
+    Accent("緑", Color(0xFF2E7D6B), Color(0xFFCFEDE4), Color(0xFF0B3B30), Color(0xFF7FD3BC), Color(0xFF1F5145), Color(0xFFCFEDE4)),
+    Accent("青", Color(0xFF2F6BD8), Color(0xFFDCE6FB), Color(0xFF0E2A5E), Color(0xFF9CBBF5), Color(0xFF223A66), Color(0xFFDCE6FB)),
+    Accent("紫", Color(0xFF7A4FC4), Color(0xFFEADFFA), Color(0xFF331A5C), Color(0xFFC9B0F2), Color(0xFF3E2C62), Color(0xFFEADFFA)),
+    Accent("赤", Color(0xFFC63D4F), Color(0xFFFADDE1), Color(0xFF5A1220), Color(0xFFF2A2AD), Color(0xFF5E2630), Color(0xFFFADDE1)),
+    Accent("オレンジ", Color(0xFFD06A1C), Color(0xFFFCE4CF), Color(0xFF5A2A05), Color(0xFFF5B47F), Color(0xFF5E3A1C), Color(0xFFFCE4CF)),
+    Accent("グレー", Color(0xFF555B63), Color(0xFFE3E6EA), Color(0xFF22262B), Color(0xFFB9C0C8), Color(0xFF3A3F45), Color(0xFFE3E6EA)),
+)
 
 // ======================================================================
 // 画面
@@ -110,6 +138,7 @@ private sealed interface Dlg {
     data class EditFolder(val folder: Folder) : Dlg
     data class SnipMenu(val snip: Snip) : Dlg
     data class FolderMenu(val folder: Folder) : Dlg
+    data class Rename(val snip: Snip) : Dlg
     data class Move(val snipId: String?, val folderId: String?) : Dlg
     data class Fill(val snip: Snip, val keys: List<String>) : Dlg
     data class ConfirmDelete(val label: String, val onYes: () -> Unit) : Dlg
@@ -118,7 +147,7 @@ private sealed interface Dlg {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun App(store: Store, sharedText: MutableState<String?>, onCopied: (String, String) -> Unit) {
+private fun App(store: Store, sharedText: MutableState<String?>, onCopy: (String, String) -> Unit, onLeave: (TapAction) -> Unit) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var current by rememberSaveable { mutableStateOf<String?>(null) }
     var searching by rememberSaveable { mutableStateOf(false) }
@@ -129,10 +158,48 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopied: (Stri
     val settings by store.settings
     val haptic = LocalHapticFeedback.current
 
-    fun tap(s: Snip) {
-        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+    var flashId by remember { mutableStateOf<String?>(null) }
+
+    /** コピー → カードを光らせて帯で知らせる → 設定に応じて少し待ってから閉じる */
+    fun onCopied(text: String, id: String) {
+        onCopy(text, id)
+        if (settings.vibrate) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        flashId = id
+        val name = store.snips.firstOrNull { it.id == id }?.displayTitle ?: ""
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            launch { snackbar.showSnackbar("コピーしました：$name", duration = SnackbarDuration.Short) }
+            val leaving = settings.tapAction == TapAction.COPY_BACK || settings.tapAction == TapAction.COPY_CLOSE
+            delay(if (leaving) 450 else 900)
+            flashId = null
+            if (leaving) { snackbar.currentSnackbarData?.dismiss(); onLeave(settings.tapAction) }
+        }
+    }
+
+    fun copyFlow(s: Snip) {
         val keys = if (settings.fillPlaceholders) Placeholder.find(s.body) else emptyList()
         if (keys.isNotEmpty()) dlg = Dlg.Fill(s, keys) else onCopied(s.body, s.id)
+    }
+
+    fun toggle(s: Snip) { expanded = if (s.id in expanded) expanded - s.id else expanded + s.id }
+
+    fun tap(s: Snip) = if (settings.tapAction == TapAction.SHOW_FULL) toggle(s) else copyFlow(s)
+
+    fun longPress(s: Snip) {
+        if (settings.vibrate) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        dlg = when (settings.longAction) {
+            LongAction.MENU -> Dlg.SnipMenu(s)
+            LongAction.EDIT -> Dlg.EditSnip(s)
+            LongAction.RENAME -> Dlg.Rename(s)
+        }
+    }
+
+    val doubleTap: ((Snip) -> Unit)? = when (settings.doubleAction) {
+        DoubleAction.NONE -> null
+        DoubleAction.RAW_COPY -> { s -> onCopied(s.body, s.id) }
+        DoubleAction.EDIT -> { s -> dlg = Dlg.EditSnip(s) }
     }
 
     // 共有で受け取ったら、今のフォルダに新規作成として開く
@@ -203,7 +270,7 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopied: (Stri
                             modifier = Modifier.fillMaxWidth().focusRequester(fr),
                         )
                         LaunchedEffect(Unit) { fr.requestFocus() }
-                    } else Text("コピペ棚", fontWeight = FontWeight.Bold)
+                    } else Text("ラテコピ", fontWeight = FontWeight.Bold)
                 },
                 actions = {
                     if (!searching) IconButton(onClick = { searching = true }) { Icon(Icons.Default.Search, "検索") }
@@ -213,7 +280,7 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopied: (Stri
                             DropdownMenuItem(text = { Text("設定") }, leadingIcon = { Icon(Icons.Default.Settings, null) },
                                 onClick = { menuOpen = false; dlg = Dlg.Settings })
                             DropdownMenuItem(text = { Text("バックアップを書き出す") }, leadingIcon = { Icon(Icons.Default.Upload, null) },
-                                onClick = { menuOpen = false; exportLauncher.launch("copipe-dana-backup.json") })
+                                onClick = { menuOpen = false; exportLauncher.launch("lattecopi-backup.json") })
                             DropdownMenuItem(text = { Text("ファイルから取り込む") }, leadingIcon = { Icon(Icons.Default.Download, null) },
                                 onClick = { menuOpen = false; importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) })
                         }
@@ -221,6 +288,7 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopied: (Stri
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             if (!searching) Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SmallFloatingActionButton(onClick = { dlg = Dlg.EditFolder(Folder(store.newId(), "", current, System.currentTimeMillis())) }) {
@@ -245,8 +313,8 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopied: (Stri
                 item { SectionLabel("ピン留め") }
                 items(pinnedEverywhere, key = { "p" + it.id }) { s ->
                     SnipCard(s, settings.previewLines, s.id in expanded, store.path(s.folderId).joinToString(" / ") { it.name },
-                        onTap = { tap(s) }, onLong = { dlg = Dlg.SnipMenu(s) },
-                        onToggle = { expanded = if (s.id in expanded) expanded - s.id else expanded + s.id })
+                        flashing = flashId == s.id, onTap = { tap(s) }, onLong = { longPress(s) },
+                        onDouble = doubleTap?.let { f -> { f(s) } }, onToggle = { toggle(s) }, onRename = { dlg = Dlg.Rename(s) })
                 }
                 item { SectionLabel("トップ") }
             }
@@ -257,8 +325,8 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopied: (Stri
             items(shownSnips, key = { it.id }) { s ->
                 SnipCard(s, settings.previewLines, s.id in expanded,
                     if (searching) store.path(s.folderId).joinToString(" / ") { it.name }.ifEmpty { "トップ" } else null,
-                    onTap = { tap(s) }, onLong = { dlg = Dlg.SnipMenu(s) },
-                    onToggle = { expanded = if (s.id in expanded) expanded - s.id else expanded + s.id })
+                    flashing = flashId == s.id, onTap = { tap(s) }, onLong = { longPress(s) },
+                    onDouble = doubleTap?.let { f -> { f(s) } }, onToggle = { toggle(s) }, onRename = { dlg = Dlg.Rename(s) })
             }
             if (subFolders.isEmpty() && shownSnips.isEmpty()) item {
                 Text(
@@ -275,8 +343,12 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopied: (Stri
         is Dlg.EditSnip -> SnipEditor(d.snip, onDismiss = { dlg = null }) { store.upsertSnip(it); dlg = null }
         is Dlg.EditFolder -> NameDialog(if (d.folder.name.isEmpty()) "新しいフォルダ" else "フォルダ名を変更", d.folder.name,
             onDismiss = { dlg = null }) { store.upsertFolder(d.folder.copy(name = it)); dlg = null }
+        is Dlg.Rename -> NameDialog("名前を変更", d.snip.title, allowEmpty = true,
+            hint = "空にすると本文1行目を表示", onDismiss = { dlg = null }) {
+            store.snips.firstOrNull { x -> x.id == d.snip.id }?.let { x -> store.upsertSnip(x.copy(title = it)) }; dlg = null }
         is Dlg.SnipMenu -> ActionSheet(d.snip.displayTitle, onDismiss = { dlg = null }, listOf(
-            Triple(Icons.Default.Edit, "編集") { dlg = Dlg.EditSnip(d.snip) },
+            Triple(Icons.Default.DriveFileRenameOutline, "名前を変更") { dlg = Dlg.Rename(d.snip) },
+            Triple(Icons.Default.Edit, "本文を編集") { dlg = Dlg.EditSnip(d.snip) },
             Triple(Icons.Default.ContentCopy, "穴埋めせずそのままコピー") { dlg = null; onCopied(d.snip.body, d.snip.id) },
             Triple(Icons.Outlined.PushPin, if (d.snip.pinned) "ピン留めを外す" else "ピン留め（トップにも表示）") {
                 store.upsertSnip(d.snip.copy(pinned = !d.snip.pinned)); dlg = null },
@@ -343,24 +415,31 @@ private fun FolderRow(f: Folder, count: Int, onTap: () -> Unit, onLong: () -> Un
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SnipCard(
-    s: Snip, previewLines: Int, open: Boolean, location: String?,
-    onTap: () -> Unit, onLong: () -> Unit, onToggle: () -> Unit,
+    s: Snip, previewLines: Int, open: Boolean, location: String?, flashing: Boolean,
+    onTap: () -> Unit, onLong: () -> Unit, onDouble: (() -> Unit)?, onToggle: () -> Unit, onRename: () -> Unit,
 ) {
+    val bg by animateColorAsState(
+        if (flashing) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer, label = "flash")
     val hasTitle = s.title.isNotBlank()
     // タイトル未入力なら1行目が見出しになるので、プレビューは2行目以降
     val previewSource = if (hasTitle) s.body else s.body.lines().dropWhile { it.isBlank() }.drop(1).joinToString("\n").trim()
     val lineCount = s.body.lines().size
     val canExpand = previewSource.isNotEmpty() && (lineCount > previewLines + 1 || s.body.length > 80)
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.large, tonalElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).combinedClickable(onClick = onTap, onLongClick = onLong),
+        color = bg, shape = MaterialTheme.shapes.large, tonalElevation = 1.dp,
+        modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large)
+            .combinedClickable(onClick = onTap, onLongClick = onLong, onDoubleClick = onDouble),
     ) {
         Column(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp).animateContentSize()) {
             Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (s.pinned) Icon(Icons.Default.PushPin, null, Modifier.size(16.dp).padding(end = 2.dp), tint = MaterialTheme.colorScheme.primary)
-                        Text(s.displayTitle, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = if (open) 3 else 1, overflow = TextOverflow.Ellipsis)
+                        if (flashing) Icon(Icons.Default.CheckCircle, "コピー済み", Modifier.size(18.dp).padding(end = 4.dp), tint = MaterialTheme.colorScheme.primary)
+                        Text(s.displayTitle, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = if (open) 3 else 1,
+                            overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        if (!hasTitle) Text("名前なし", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 6.dp).clip(MaterialTheme.shapes.small).combinedClickableSafe(onRename).padding(horizontal = 4.dp, vertical = 2.dp))
                     }
                     if (location != null && location.isNotEmpty())
                         Text(location, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
@@ -429,12 +508,13 @@ private fun FillDialog(s: Snip, keys: List<String>, onDismiss: () -> Unit, onDon
 }
 
 @Composable
-private fun NameDialog(title: String, init: String, onDismiss: () -> Unit, onOk: (String) -> Unit) {
+private fun NameDialog(title: String, init: String, allowEmpty: Boolean = false, hint: String? = null, onDismiss: () -> Unit, onOk: (String) -> Unit) {
     var name by remember { mutableStateOf(init) }
     val fr = remember { FocusRequester() }
     AlertDialog(onDismissRequest = onDismiss, title = { Text(title) },
-        text = { OutlinedTextField(name, { name = it }, singleLine = true, modifier = Modifier.fillMaxWidth().focusRequester(fr)) },
-        confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { onOk(name.trim()) }) { Text("OK") } },
+        text = { OutlinedTextField(name, { name = it }, singleLine = true, placeholder = if (hint != null) { { Text(hint) } } else null,
+            modifier = Modifier.fillMaxWidth().focusRequester(fr)) },
+        confirmButton = { TextButton(enabled = allowEmpty || name.isNotBlank(), onClick = { onOk(name.trim()) }) { Text("OK") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } })
     LaunchedEffect(Unit) { fr.requestFocus() }
 }
@@ -474,37 +554,59 @@ private fun MoveDialog(store: Store, exclude: String?, onDismiss: () -> Unit, on
 }
 
 @Composable
+private fun <E> RadioList(items: List<E>, selected: E, label: (E) -> String, onPick: (E) -> Unit) {
+    items.forEach { e ->
+        Row(Modifier.fillMaxWidth().combinedClickableSafe { onPick(e) }, verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected == e, { onPick(e) }); Text(label(e))
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun SettingsDialog(s: Settings, onDismiss: () -> Unit, onChange: (Settings) -> Unit) {
     AlertDialog(onDismissRequest = onDismiss, title = { Text("設定") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                SectionLabel("タップしたとき")
-                TapAction.entries.forEach { a ->
-                    Row(Modifier.fillMaxWidth().combinedClickableSafe { onChange(s.copy(tapAction = a)) }, verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(s.tapAction == a, { onChange(s.copy(tapAction = a)) }); Text(a.label)
+                SectionLabel("見た目")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ThemeMode.entries.forEach { m -> FilterChip(s.theme == m, { onChange(s.copy(theme = m)) }, label = { Text(m.label) }) }
+                }
+                Text("アクセント色", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ACCENTS.forEachIndexed { i, a ->
+                        FilterChip(s.accent == i, { onChange(s.copy(accent = i)) }, label = { Text(a.name) },
+                            leadingIcon = { Icon(Icons.Default.Circle, null, tint = a.lPrimary, modifier = Modifier.size(14.dp)) })
                     }
                 }
-                SectionLabel("本文プレビューの行数")
-                Row {
+                Text("文字サイズ", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("小", "中", "大").forEachIndexed { i, t -> FilterChip(s.fontSize == i, { onChange(s.copy(fontSize = i)) }, label = { Text(t) }) }
+                }
+                Text("本文プレビューの行数", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(0, 1, 2, 3, 5).forEach { n ->
-                        FilterChip(s.previewLines == n, { onChange(s.copy(previewLines = n)) }, label = { Text(if (n == 0) "なし" else "${n}行") },
-                            modifier = Modifier.padding(end = 6.dp))
+                        FilterChip(s.previewLines == n, { onChange(s.copy(previewLines = n)) }, label = { Text(if (n == 0) "なし" else "${n}行") })
                     }
                 }
+
+                SectionLabel("タップ")
+                RadioList(TapAction.entries, s.tapAction, { it.label }) { onChange(s.copy(tapAction = it)) }
+                SectionLabel("長押し")
+                RadioList(LongAction.entries, s.longAction, { it.label }) { onChange(s.copy(longAction = it)) }
+                SectionLabel("ダブルタップ")
+                RadioList(DoubleAction.entries, s.doubleAction, { it.label }) { onChange(s.copy(doubleAction = it)) }
                 SectionLabel("並び順")
-                SortMode.entries.forEach { m ->
-                    Row(Modifier.fillMaxWidth().combinedClickableSafe { onChange(s.copy(sort = m)) }, verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(s.sort == m, { onChange(s.copy(sort = m)) }); Text(m.label)
-                    }
-                }
+                RadioList(SortMode.entries, s.sort, { it.label }) { onChange(s.copy(sort = it)) }
+
                 SectionLabel("その他")
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("[ ] の穴埋め入力を出す", Modifier.weight(1f))
                     Switch(s.fillPlaceholders, { onChange(s.copy(fillPlaceholders = it)) })
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("コピー時に通知（Android 12以前）", Modifier.weight(1f))
-                    Switch(s.showToast, { onChange(s.copy(showToast = it)) })
+                    Text("コピー時に振動", Modifier.weight(1f))
+                    Switch(s.vibrate, { onChange(s.copy(vibrate = it)) })
                 }
             }
         },
