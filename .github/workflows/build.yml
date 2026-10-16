@@ -1,7 +1,9 @@
 name: Build APK
-on:
-  push:
-  workflow_dispatch:
+on: { push: { branches: [main] }, workflow_dispatch: {} }
+permissions:
+  contents: write
+env:
+  APP_NAME: copipe-dana
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -11,16 +13,21 @@ jobs:
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.9' }
+      # 署名はリポジトリ内の固定鍵 app/copipecho.jks（上書きインストールのため変更しない）
       - run: gradle :app:assembleRelease
-      - uses: actions/upload-artifact@v4
-        with: { name: copipecho-apk, path: app/build/outputs/apk/release/*.apk }
-      - uses: softprops/action-gh-release@v2
-        if: github.ref == 'refs/heads/main'
-        with:
-          tag_name: latest
-          name: 最新版
-          files: app/build/outputs/apk/release/*.apk
-          prerelease: false
-          make_latest: true
-permissions:
-  contents: write
+      - run: cp app/build/outputs/apk/release/app-release.apk "$APP_NAME.apk"
+      - name: Publish latest release
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          gh release delete latest --cleanup-tag -y || true
+          gh release create latest "$APP_NAME.apk" --title "最新版 (${GITHUB_SHA::7})" --notes "自動ビルド ${GITHUB_SHA::7}" --latest
+      - name: Upload to Google Drive
+        env:
+          GAS_URL: ${{ secrets.GAS_URL }}
+          GAS_KEY: ${{ secrets.GAS_KEY }}
+        run: |
+          if [ -z "$GAS_URL" ] || [ -z "$GAS_KEY" ]; then echo "Drive保存をスキップ（Secrets未登録）"; exit 0; fi
+          base64 -w0 "$APP_NAME.apk" > apk.b64
+          curl -sSL --fail -X POST -H "Content-Type: text/plain" --data-binary @apk.b64 \
+            "$GAS_URL?key=$GAS_KEY&app=$APP_NAME&ver=${GITHUB_SHA::7}" | tee result.json
+          grep -q '"ok":true' result.json

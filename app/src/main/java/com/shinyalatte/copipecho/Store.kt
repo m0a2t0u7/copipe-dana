@@ -37,7 +37,7 @@ enum class DoubleAction(val label: String) { NONE("なし"), RAW_COPY("穴埋め
 enum class ThemeMode(val label: String) { SYSTEM("端末に合わせる"), LIGHT("ライト"), DARK("ダーク") }
 
 enum class SortMode(val label: String) {
-    MANUAL("作成順"), RECENT("最近使った順"), FREQUENT("よく使う順"), TITLE("名前順"),
+    MANUAL("手動（自分で並べた順）"), RECENT("最近使った順"), FREQUENT("よく使う順"), TITLE("名前順"),
 }
 
 data class Settings(
@@ -100,6 +100,26 @@ class Store(private val ctx: Context) {
         save()
     }
 
+    /** 並べ替えモードで決めた順番を保存する */
+    fun applyOrder(folderIds: List<String>, snipIds: List<String>) {
+        folderIds.forEachIndexed { i, id -> val k = folders.indexOfFirst { it.id == id }; if (k >= 0) folders[k] = folders[k].copy(order = i.toLong()) }
+        snipIds.forEachIndexed { i, id -> val k = snips.indexOfFirst { it.id == id }; if (k >= 0) snips[k] = snips[k].copy(order = i.toLong()) }
+        save()
+    }
+
+    fun moveItems(snipIds: Set<String>, folderIds: Set<String>, dest: String?) {
+        val base = System.currentTimeMillis()
+        var n = 0L
+        snips.replaceAll { if (it.id in snipIds) it.copy(folderId = dest, order = base + n++) else it }
+        folders.replaceAll { if (it.id in folderIds && it.id != dest) it.copy(parentId = dest, order = base + n++) else it }
+        save()
+    }
+
+    fun setPinned(ids: Set<String>, pinned: Boolean) {
+        snips.replaceAll { if (it.id in ids) it.copy(pinned = pinned) else it }
+        save()
+    }
+
     fun upsertFolder(f: Folder) {
         val i = folders.indexOfFirst { it.id == f.id }
         if (i >= 0) folders[i] = f else folders += f
@@ -125,11 +145,11 @@ class Store(private val ctx: Context) {
     }
 
     /** 移動先の選択用。自分自身と子孫は除外できる */
-    fun flatTree(exclude: String? = null): List<Pair<Folder, Int>> {
+    fun flatTree(exclude: Set<String> = emptySet()): List<Pair<Folder, Int>> {
         val out = ArrayList<Pair<Folder, Int>>()
         fun walk(parent: String?, depth: Int) {
             folders.filter { it.parentId == parent }.sortedBy { it.order }.forEach {
-                if (it.id == exclude) return@forEach
+                if (it.id in exclude) return@forEach
                 out += it to depth; walk(it.id, depth + 1)
             }
         }

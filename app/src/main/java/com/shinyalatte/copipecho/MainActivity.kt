@@ -47,6 +47,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.rememberLazyListState
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 
 class MainActivity : ComponentActivity() {
     private lateinit var store: Store
@@ -139,7 +145,8 @@ private sealed interface Dlg {
     data class SnipMenu(val snip: Snip) : Dlg
     data class FolderMenu(val folder: Folder) : Dlg
     data class Rename(val snip: Snip) : Dlg
-    data class Move(val snipId: String?, val folderId: String?) : Dlg
+    data class Move(val snipIds: Set<String>, val folderIds: Set<String>, val base: String?) : Dlg
+    data class NewFolderMove(val move: Move) : Dlg
     data class Fill(val snip: Snip, val keys: List<String>) : Dlg
     data class ConfirmDelete(val label: String, val onYes: () -> Unit) : Dlg
     data object Settings : Dlg
@@ -155,6 +162,8 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopy: (String
     var dlg by remember { mutableStateOf<Dlg?>(null) }
     var expanded by remember { mutableStateOf(setOf<String>()) }
     var menuOpen by remember { mutableStateOf(false) }
+    var reordering by rememberSaveable { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(setOf<String>()) }
     val settings by store.settings
     val haptic = LocalHapticFeedback.current
 
@@ -227,8 +236,9 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopy: (String
          .onFailure { Toast.makeText(ctx, "読み込み失敗：${it.message}", Toast.LENGTH_LONG).show() }
     }
 
-    BackHandler(enabled = searching || current != null) {
-        if (searching) { searching = false; query = "" }
+    BackHandler(enabled = reordering || searching || current != null) {
+        if (reordering) { reordering = false; selected = emptySet() }
+        else if (searching) { searching = false; query = "" }
         else current = store.folders.firstOrNull { it.id == current }?.parentId
     }
 
@@ -254,7 +264,8 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopy: (String
         topBar = {
             TopAppBar(
                 navigationIcon = {
-                    if (searching || current != null) IconButton(onClick = {
+                    if (reordering) IconButton(onClick = { reordering = false; selected = emptySet() }) { Icon(Icons.Default.Close, "並べ替えを終える") }
+                    else if (searching || current != null) IconButton(onClick = {
                         if (searching) { searching = false; query = "" }
                         else current = store.folders.firstOrNull { it.id == current }?.parentId
                     }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "戻る") }
@@ -270,9 +281,21 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopy: (String
                             modifier = Modifier.fillMaxWidth().focusRequester(fr),
                         )
                         LaunchedEffect(Unit) { fr.requestFocus() }
-                    } else Text("ラテコピ", fontWeight = FontWeight.Bold)
+                    } else if (reordering) Text(if (selected.isEmpty()) "並べ替え・整理" else "${selected.size}件を選択中", fontWeight = FontWeight.Bold)
+                    else Text("ラテコピ", fontWeight = FontWeight.Bold)
                 },
                 actions = {
+                    if (reordering) {
+                        TextButton(onClick = { reordering = false; selected = emptySet() }) { Text("完了", fontWeight = FontWeight.Bold) }
+                        return@TopAppBar
+                    }
+                    if (!searching) IconButton(onClick = {
+                        if (settings.sort != SortMode.MANUAL) {
+                            store.settings.value = settings.copy(sort = SortMode.MANUAL); store.save()
+                            scope.launch { snackbar.showSnackbar("並び順を「手動」に切り替えました") }
+                        }
+                        reordering = true
+                    }) { Icon(Icons.Default.SwapVert, "並べ替え・整理") }
                     if (!searching) IconButton(onClick = { searching = true }) { Icon(Icons.Default.Search, "検索") }
                     Box {
                         IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, "メニュー") }
@@ -289,8 +312,25 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopy: (String
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = {
+            if (reordering && selected.isNotEmpty()) BottomAppBar {
+                val sIds = selected.filter { it.startsWith("s:") }.map { it.drop(2) }.toSet()
+                val fIds = selected.filter { it.startsWith("f:") }.map { it.drop(2) }.toSet()
+                BarAction(Icons.Default.DriveFileMove, "移動") { dlg = Dlg.Move(sIds, fIds, current) }
+                if (sIds.isNotEmpty()) {
+                    val allPinned = store.snips.filter { it.id in sIds }.all { it.pinned }
+                    BarAction(Icons.Default.PushPin, if (allPinned) "ピン外す" else "ピン留め") { store.setPinned(sIds, !allPinned); selected = emptySet() }
+                }
+                BarAction(Icons.Default.Delete, "削除") {
+                    dlg = Dlg.ConfirmDelete("${selected.size}件を削除します。フォルダの中身は1つ上の階層へ移ります") {
+                        sIds.forEach { store.deleteSnip(it) }; fIds.forEach { store.deleteFolder(it) }; selected = emptySet()
+                    }
+                }
+                BarAction(Icons.Default.Deselect, "選択解除") { selected = emptySet() }
+            }
+        },
         floatingActionButton = {
-            if (!searching) Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (!searching && !reordering) Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SmallFloatingActionButton(onClick = { dlg = Dlg.EditFolder(Folder(store.newId(), "", current, System.currentTimeMillis())) }) {
                     Icon(Icons.Default.CreateNewFolder, "新規フォルダ")
                 }
@@ -301,6 +341,13 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopy: (String
             }
         },
     ) { pad ->
+        if (reordering) {
+            ReorderList(store, current, selected, pad,
+                onSelect = { k -> selected = if (k in selected) selected - k else selected + k },
+                onOpen = { id -> current = id; selected = emptySet() },
+                onCrumb = { current = it; selected = emptySet() })
+            return@Scaffold
+        }
         LazyColumn(
             modifier = Modifier.padding(pad).fillMaxSize(),
             contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 160.dp),
@@ -310,11 +357,12 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopy: (String
                 Breadcrumb(store.path(current)) { current = it }
             }
             if (pinnedEverywhere.isNotEmpty()) {
-                item { SectionLabel("ピン留め") }
+                item { SectionLabel("ピン留め（全フォルダ）") }
                 items(pinnedEverywhere, key = { "p" + it.id }) { s ->
                     SnipCard(s, settings.previewLines, s.id in expanded, store.path(s.folderId).joinToString(" / ") { it.name },
                         flashing = flashId == s.id, onTap = { tap(s) }, onLong = { longPress(s) },
-                        onDouble = doubleTap?.let { f -> { f(s) } }, onToggle = { toggle(s) }, onRename = { dlg = Dlg.Rename(s) })
+                        onDouble = doubleTap?.let { f -> { f(s) } }, onToggle = { toggle(s) }, onRename = { dlg = Dlg.Rename(s) },
+                        onPin = { store.upsertSnip(s.copy(pinned = !s.pinned)) })
                 }
                 item { SectionLabel("トップ") }
             }
@@ -326,7 +374,8 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopy: (String
                 SnipCard(s, settings.previewLines, s.id in expanded,
                     if (searching) store.path(s.folderId).joinToString(" / ") { it.name }.ifEmpty { "トップ" } else null,
                     flashing = flashId == s.id, onTap = { tap(s) }, onLong = { longPress(s) },
-                    onDouble = doubleTap?.let { f -> { f(s) } }, onToggle = { toggle(s) }, onRename = { dlg = Dlg.Rename(s) })
+                    onDouble = doubleTap?.let { f -> { f(s) } }, onToggle = { toggle(s) }, onRename = { dlg = Dlg.Rename(s) },
+                        onPin = { store.upsertSnip(s.copy(pinned = !s.pinned)) })
             }
             if (subFolders.isEmpty() && shownSnips.isEmpty()) item {
                 Text(
@@ -352,7 +401,7 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopy: (String
             Triple(Icons.Default.ContentCopy, "穴埋めせずそのままコピー") { dlg = null; onCopied(d.snip.body, d.snip.id) },
             Triple(Icons.Outlined.PushPin, if (d.snip.pinned) "ピン留めを外す" else "ピン留め（トップにも表示）") {
                 store.upsertSnip(d.snip.copy(pinned = !d.snip.pinned)); dlg = null },
-            Triple(Icons.Default.DriveFileMove, "フォルダを移動") { dlg = Dlg.Move(d.snip.id, null) },
+            Triple(Icons.Default.DriveFileMove, "フォルダを移動") { dlg = Dlg.Move(setOf(d.snip.id), emptySet(), current) },
             Triple(Icons.Default.FileCopy, "複製") {
                 store.upsertSnip(d.snip.copy(id = store.newId(), title = d.snip.title.ifBlank { d.snip.displayTitle } + "（コピー）",
                     uses = 0, lastUsed = 0, order = System.currentTimeMillis())); dlg = null },
@@ -360,14 +409,18 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopy: (String
         ))
         is Dlg.FolderMenu -> ActionSheet(d.folder.name, onDismiss = { dlg = null }, listOf(
             Triple(Icons.Default.Edit, "名前を変更") { dlg = Dlg.EditFolder(d.folder) },
-            Triple(Icons.Default.DriveFileMove, "フォルダごと移動") { dlg = Dlg.Move(null, d.folder.id) },
+            Triple(Icons.Default.DriveFileMove, "フォルダごと移動") { dlg = Dlg.Move(emptySet(), setOf(d.folder.id), current) },
             Triple(Icons.Default.Delete, "フォルダを削除（中身は1つ上へ）") {
                 dlg = Dlg.ConfirmDelete("「${d.folder.name}」を削除します。中の定型文は消えず、1つ上の階層へ移ります") { store.deleteFolder(d.folder.id) } },
         ))
-        is Dlg.Move -> MoveDialog(store, exclude = d.folderId, onDismiss = { dlg = null }) { dest ->
-            if (d.snipId != null) store.snips.firstOrNull { it.id == d.snipId }?.let { store.upsertSnip(it.copy(folderId = dest)) }
-            if (d.folderId != null) store.folders.firstOrNull { it.id == d.folderId }?.let { store.upsertFolder(it.copy(parentId = dest)) }
-            dlg = null
+        is Dlg.Move -> MoveDialog(store, exclude = d.folderIds, onDismiss = { dlg = null },
+            onNewFolder = { dlg = Dlg.NewFolderMove(d) }) { dest ->
+            store.moveItems(d.snipIds, d.folderIds, dest); selected = emptySet(); dlg = null
+            scope.launch { snackbar.showSnackbar("移動しました：${if (dest == null) "トップ" else store.folders.firstOrNull { it.id == dest }?.name}") }
+        }
+        is Dlg.NewFolderMove -> NameDialog("新しいフォルダに移動", "", hint = "フォルダ名", onDismiss = { dlg = null }) { name ->
+            val nf = Folder(store.newId(), name, d.move.base, System.currentTimeMillis())
+            store.upsertFolder(nf); store.moveItems(d.move.snipIds, d.move.folderIds, nf.id); selected = emptySet(); dlg = null
         }
         is Dlg.Fill -> FillDialog(d.snip, d.keys, onDismiss = { dlg = null }) { text -> dlg = null; onCopied(text, d.snip.id) }
         is Dlg.ConfirmDelete -> AlertDialog(
@@ -416,7 +469,7 @@ private fun FolderRow(f: Folder, count: Int, onTap: () -> Unit, onLong: () -> Un
 @Composable
 private fun SnipCard(
     s: Snip, previewLines: Int, open: Boolean, location: String?, flashing: Boolean,
-    onTap: () -> Unit, onLong: () -> Unit, onDouble: (() -> Unit)?, onToggle: () -> Unit, onRename: () -> Unit,
+    onTap: () -> Unit, onLong: () -> Unit, onDouble: (() -> Unit)?, onToggle: () -> Unit, onRename: () -> Unit, onPin: () -> Unit,
 ) {
     val bg by animateColorAsState(
         if (flashing) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer, label = "flash")
@@ -427,6 +480,7 @@ private fun SnipCard(
     val canExpand = previewSource.isNotEmpty() && (lineCount > previewLines + 1 || s.body.length > 80)
     Surface(
         color = bg, shape = MaterialTheme.shapes.large, tonalElevation = 1.dp,
+        border = if (s.pinned) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
         modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large)
             .combinedClickable(onClick = onTap, onLongClick = onLong, onDoubleClick = onDouble),
     ) {
@@ -434,7 +488,6 @@ private fun SnipCard(
             Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (s.pinned) Icon(Icons.Default.PushPin, null, Modifier.size(16.dp).padding(end = 2.dp), tint = MaterialTheme.colorScheme.primary)
                         if (flashing) Icon(Icons.Default.CheckCircle, "コピー済み", Modifier.size(18.dp).padding(end = 4.dp), tint = MaterialTheme.colorScheme.primary)
                         Text(s.displayTitle, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = if (open) 3 else 1,
                             overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
@@ -443,6 +496,10 @@ private fun SnipCard(
                     }
                     if (location != null && location.isNotEmpty())
                         Text(location, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
+                IconButton(onClick = onPin, modifier = Modifier.size(40.dp)) {
+                    if (s.pinned) Icon(Icons.Default.PushPin, "ピン留めを外す", tint = MaterialTheme.colorScheme.primary)
+                    else Icon(Icons.Outlined.PushPin, "ピン留め", tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f))
                 }
                 if (canExpand) IconButton(onClick = onToggle, modifier = Modifier.size(40.dp)) {
                     Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (open) "たたむ" else "全文を見る")
@@ -536,10 +593,15 @@ private fun ActionSheet(title: String, onDismiss: () -> Unit, actions: List<Trip
 }
 
 @Composable
-private fun MoveDialog(store: Store, exclude: String?, onDismiss: () -> Unit, onPick: (String?) -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("移動先") },
+private fun MoveDialog(store: Store, exclude: Set<String>, onDismiss: () -> Unit, onNewFolder: () -> Unit, onPick: (String?) -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("移動先を選ぶ") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
+                Row(Modifier.fillMaxWidth().combinedClickableSafe(onNewFolder).padding(vertical = 10.dp)) {
+                    Icon(Icons.Default.CreateNewFolder, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(12.dp))
+                    Text("新しいフォルダを作って移動", color = MaterialTheme.colorScheme.primary)
+                }
+                HorizontalDivider()
                 Row(Modifier.fillMaxWidth().combinedClickableSafe { onPick(null) }.padding(vertical = 10.dp)) {
                     Icon(Icons.Default.Home, null); Spacer(Modifier.width(12.dp)); Text("トップ")
                 }
@@ -615,3 +677,89 @@ private fun SettingsDialog(s: Settings, onDismiss: () -> Unit, onChange: (Settin
 
 @OptIn(ExperimentalFoundationApi::class)
 private fun Modifier.combinedClickableSafe(onClick: () -> Unit): Modifier = this.combinedClickable(onClick = onClick)
+
+@Composable
+private fun RowScope.BarAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+    Column(Modifier.weight(1f).clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(icon, null); Text(label, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+private class Entry(val key: String, val folder: Folder?, val snip: Snip?) {
+    /** ドラッグで入れ替えできるのは同じグループ同士だけ（フォルダ／ピン留め／通常） */
+    val group get() = when { folder != null -> 0; snip!!.pinned -> 1; else -> 2 }
+}
+
+private fun buildEntries(store: Store, current: String?): List<Entry> =
+    store.folders.filter { it.parentId == current }.sortedBy { it.order }.map { Entry("f:" + it.id, it, null) } +
+    store.snips.filter { it.folderId == current }.sortedWith(compareByDescending<Snip> { it.pinned }.thenBy { it.order })
+        .map { Entry("s:" + it.id, null, it) }
+
+@Composable
+private fun ReorderList(
+    store: Store, current: String?, selected: Set<String>, pad: PaddingValues,
+    onSelect: (String) -> Unit, onOpen: (String) -> Unit, onCrumb: (String?) -> Unit,
+) {
+    val haptic = LocalHapticFeedback.current
+    val sig = store.folders.toList() to store.snips.toList()
+    var entries by remember(current, sig) { mutableStateOf(buildEntries(store, current)) }
+    val listState = rememberLazyListState()
+    val rs = rememberReorderableLazyListState(listState) { from, to ->
+        val a = entries.indexOfFirst { it.key == from.key }
+        val b = entries.indexOfFirst { it.key == to.key }
+        if (a >= 0 && b >= 0 && entries[a].group == entries[b].group) {
+            entries = entries.toMutableList().apply { add(b, removeAt(a)) }
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
+    fun commit() = store.applyOrder(entries.mapNotNull { it.folder?.id }, entries.mapNotNull { it.snip?.id })
+
+    LazyColumn(
+        state = listState, modifier = Modifier.padding(pad).fillMaxSize(),
+        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 40.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        item(key = "crumb") { Breadcrumb(store.path(current), onCrumb) }
+        item(key = "help") {
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium) {
+                Text("右の ≡ をつかんで上下に動かすと順番が変わります。左のチェックで選ぶと、下のボタンでまとめて移動・ピン留め・削除ができます。フォルダ名をタップすると中に入れます。",
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp))
+            }
+        }
+        if (entries.isEmpty()) item(key = "empty") {
+            Text("このフォルダは空です", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(24.dp))
+        }
+        items(entries, key = { it.key }) { e ->
+            ReorderableItem(rs, key = e.key) { dragging ->
+                val elev by animateDpAsState(if (dragging) 8.dp else 0.dp, label = "elev")
+                val sel = e.key in selected
+                val cs = MaterialTheme.colorScheme
+                Surface(
+                    shape = MaterialTheme.shapes.large, shadowElevation = elev,
+                    color = when { sel -> cs.primaryContainer; e.folder != null -> cs.surfaceContainerHigh; else -> cs.surfaceContainer },
+                    border = if (e.snip?.pinned == true) BorderStroke(1.5.dp, cs.primary) else null,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(Modifier.padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(sel, { onSelect(e.key) })
+                        val icon = when { e.folder != null -> Icons.Default.Folder; e.snip!!.pinned -> Icons.Default.PushPin; else -> Icons.Default.Description }
+                        Icon(icon, null, tint = cs.primary, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            e.folder?.name ?: e.snip!!.displayTitle, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            fontWeight = if (e.folder != null) FontWeight.SemiBold else FontWeight.Normal,
+                            modifier = Modifier.weight(1f).clickable { if (e.folder != null) onOpen(e.folder.id) else onSelect(e.key) }.padding(vertical = 14.dp),
+                        )
+                        if (e.folder != null) Icon(Icons.Default.ChevronRight, null, tint = cs.onSurfaceVariant)
+                        Icon(Icons.Default.DragHandle, "つかんで並べ替え",
+                            modifier = Modifier.draggableHandle(
+                                onDragStarted = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
+                                onDragStopped = { commit() },
+                            ).padding(horizontal = 14.dp, vertical = 14.dp))
+                    }
+                }
+            }
+        }
+    }
+}

@@ -9,7 +9,7 @@ android {
     defaultConfig {
         applicationId = "com.shinyalatte.copipecho"
         minSdk = 26; targetSdk = 34
-        versionCode = 1; versionName = "1.0"
+        versionCode = 3; versionName = "1.2"
     }
     signingConfigs {
         create("release") {
@@ -35,4 +35,5 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui")
+    implementation("sh.calvin.reorderable:reorderable:2.4.0")
 }
