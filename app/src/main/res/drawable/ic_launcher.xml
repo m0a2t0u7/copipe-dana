@@ -1,6 +1,31 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#2E7D6B" android:pathData="M0,0h108v108h-108z"/>
-    <path android:fillColor="#CFEDE4" android:pathData="M36,30h30a6,6 0,0 1,6 6v40a6,6 0,0 1,-6 6h-30a6,6 0,0 1,-6 -6v-40a6,6 0,0 1,6 -6z"/>
-    <path android:fillColor="#FFFFFF" android:pathData="M44,24h30a6,6 0,0 1,6 6v40a6,6 0,0 1,-6 6h-30a6,6 0,0 1,-6 -6v-40a6,6 0,0 1,6 -6z"/>
-    <path android:fillColor="#2E7D6B" android:pathData="M46,36h26v4h-26zM46,46h26v4h-26zM46,56h16v4h-16z"/>
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ラテコピペ / 案A: 濃紺の背景に重なる白いコピー用紙 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Launcher silhouette: Android masks this to the user's selected icon shape. -->
+    <path android:fillColor="#1B2D70"
+        android:pathData="M0,0 H108 V108 H0 Z" />
+    <!-- A subtle tonal shift keeps the flat background from feeling heavy. -->
+    <path android:fillColor="#233982"
+        android:pathData="M0,82 L108,28 L108,108 L0,108 Z" />
+    <!-- Rear paper, offset toward the lower-left. -->
+    <path android:fillColor="#C7CCFF"
+        android:pathData="M28,40 Q28,34 34,34 H65 Q71,34 71,40 V79 Q71,85 65,85 H34 Q28,85 28,79 Z" />
+    <!-- Middle paper, offset toward the lower-right. -->
+    <path android:fillColor="#8D85EA"
+        android:pathData="M40,34 Q40,28 46,28 H74 Q80,28 80,34 V75 Q80,81 74,81 H46 Q40,81 40,75 Z" />
+    <!-- The visible white copy sheet. Slight rotation matches the selected proposal. -->
+    <group android:rotation="-7" android:pivotX="53" android:pivotY="51">
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M35,26 Q35,20 41,20 H69 Q75,20 75,26 V68 Q75,74 69,74 H41 Q35,74 35,68 Z" />
+        <path android:fillColor="#6C63FF"
+            android:pathData="M43,37 Q43,35 45,35 H65 Q67,35 67,37 Q67,39 65,39 H45 Q43,39 43,37 Z" />
+        <path android:fillColor="#6C63FF"
+            android:pathData="M43,47 Q43,45 45,45 H65 Q67,45 67,47 Q67,49 65,49 H45 Q43,49 43,47 Z" />
+        <path android:fillColor="#6C63FF"
+            android:pathData="M43,57 Q43,55 45,55 H59 Q61,55 61,57 Q61,59 59,59 H45 Q43,59 43,57 Z" />
+    </group>
 </vector>

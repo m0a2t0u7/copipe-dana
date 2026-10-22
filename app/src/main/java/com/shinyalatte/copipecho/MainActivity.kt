@@ -282,7 +282,7 @@ private fun App(store: Store, sharedText: MutableState<String?>, onCopy: (String
                         )
                         LaunchedEffect(Unit) { fr.requestFocus() }
                     } else if (reordering) Text(if (selected.isEmpty()) "並べ替え・整理" else "${selected.size}件を選択中", fontWeight = FontWeight.Bold)
-                    else Text("ラテコピ", fontWeight = FontWeight.Bold)
+                    else Text("ラテコピペ", fontWeight = FontWeight.Bold)
                 },
                 actions = {
                     if (reordering) {

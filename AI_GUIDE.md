@@ -1,4 +1,4 @@
-# AI向けガイド（ラテコピ）
+# AI向けガイド（ラテコピペ）
 
 タップでコピーするAndroid定型文アプリ。Kotlin + Jetpack Compose。
 
@@ -16,3 +16,8 @@
 ## 消してはいけないもの
 - `app/copipecho.jks` と `app/build.gradle.kts` の signingConfigs（消すと上書きインストールできなくなる）
 - 保存データ形式（`Store.toJson` / `fromJson`）は後方互換を保つ
+
+## デザイン
+- 表示名：ラテコピペ
+- ランチャーアイコン：案A（濃紺ベース＋重なった白い書類＋青紫のアクセント）。`res/drawable/ic_launcher.xml` で定義
+- applicationId `com.shinyalatte.copipecho` と既存の署名鍵、JSON形式は維持する
