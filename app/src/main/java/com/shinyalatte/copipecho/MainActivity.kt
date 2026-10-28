@@ -13,6 +13,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import kotlinx.coroutines.delay
@@ -627,6 +628,11 @@ private fun <E> RadioList(items: List<E>, selected: E, label: (E) -> String, onP
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SettingsDialog(s: Settings, onDismiss: () -> Unit, onChange: (Settings) -> Unit) {
+    val context = LocalContext.current
+    val appVersion = remember(context) {
+        try { context.packageManager.getPackageInfo(context.packageName, 0).versionName?.takeIf { it.isNotBlank() } ?: "取得できません" }
+        catch (_: android.content.pm.PackageManager.NameNotFoundException) { "取得できません" }
+    }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("設定") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
@@ -670,6 +676,8 @@ private fun SettingsDialog(s: Settings, onDismiss: () -> Unit, onChange: (Settin
                     Text("コピー時に振動", Modifier.weight(1f))
                     Switch(s.vibrate, { onChange(s.copy(vibrate = it)) })
                 }
+                SectionLabel("アプリ情報")
+                Text("バージョン $appVersion", style = MaterialTheme.typography.bodyMedium)
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("閉じる") } })
